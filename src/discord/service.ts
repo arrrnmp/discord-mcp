@@ -2,9 +2,10 @@ import { type HttpClient } from 'seyfert/lib/client/httpclient.js';
 import type { GuildChannelTypes } from 'seyfert/lib/structures/channels.js';
 import type {
   APIGuild,
-  APIGuildCategoryChannel,
-  APIRole,
   APIChannel,
+  APIRole,
+  APIVoiceRegion,
+  OverwriteType,
   RESTAPIPartialCurrentUserGuild,
   RESTPatchAPIChannelJSONBody,
   RESTPatchAPIGuildRoleJSONBody,
@@ -12,24 +13,23 @@ import type {
   RESTPostAPIGuildRoleJSONBody,
 } from 'seyfert/lib/types/index.js';
 
-import type { AppConfig } from '../config/env.js';
-import { ToolError } from '../lib/errors.js';
-import { logger } from '../lib/logging.js';
-import type { DiscordChannelSummary, DiscordGuildSummary, DiscordRoleSummary } from '../types/discord.js';
+import type {
+  DiscordChannelPermissionOverwriteSummary,
+  DiscordChannelSummary,
+  DiscordGuildSummary,
+  DiscordRoleSummary,
+} from '../types/discord.js';
+import { DiscordBaseService } from './base.js';
 
-type MutationContext = {
-  guildId: string;
-  action: string;
-  reason?: string;
-  confirm?: boolean;
+export type DiscordVoiceRegionSummary = {
+  id: string;
+  name: string;
+  optimal: boolean;
+  deprecated: boolean;
+  custom: boolean;
 };
 
-export class DiscordService {
-  constructor(
-    private readonly client: HttpClient,
-    private readonly config: AppConfig,
-  ) {}
-
+export class DiscordService extends DiscordBaseService {
   async listGuilds(): Promise<DiscordGuildSummary[]> {
     const guilds = await this.client.proxy.users('@me').guilds.get({
       query: {
@@ -74,19 +74,108 @@ export class DiscordService {
     };
   }
 
+  async listGuildVoiceRegions(guildId: string): Promise<DiscordVoiceRegionSummary[]> {
+    this.assertGuildAllowed(guildId);
+    const regions = await this.client.proxy.guilds(guildId).regions.get();
+    return regions.map((region) => this.toVoiceRegionSummary(region));
+  }
+
+  async listVoiceRegions(): Promise<DiscordVoiceRegionSummary[]> {
+    const regions = await this.client.proxy.voice.region.get();
+    return regions.map((region) => this.toVoiceRegionSummary(region));
+  }
+
+  async modifyGuildChannelPositions(
+    guildId: string,
+    positions: Array<{
+      id: string;
+      position: number | null;
+      lockPermissions?: boolean | undefined;
+      parentId?: string | null | undefined;
+    }>,
+    options: {
+      reason?: string;
+      confirm?: boolean;
+    },
+  ): Promise<void> {
+    this.assertGuildAllowed(guildId);
+    this.assertConfirm(options.confirm, 'channel.reorder', { guildId });
+
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'channel.reorder', {
+        reason: options.reason,
+        confirm: options.confirm,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('channel.reorder', { guildId, count: positions.length });
+    }
+
+    const payload = positions.map((pos) => ({
+      id: pos.id,
+      ...(pos.position !== null ? { position: pos.position } : {}),
+      ...(pos.lockPermissions !== undefined ? { lock_permissions: pos.lockPermissions } : {}),
+      ...(pos.parentId !== undefined ? { parent_id: pos.parentId } : {}),
+    }));
+
+    await this.client.proxy.guilds(guildId).channels.patch({
+      body: payload as any,
+      reason: options.reason,
+    });
+  }
+
+  async modifyGuildRolePositions(
+    guildId: string,
+    positions: Array<{
+      id: string;
+      position: number | null;
+    }>,
+    options: {
+      reason?: string;
+      confirm?: boolean;
+    },
+  ): Promise<DiscordRoleSummary[]> {
+    this.assertGuildAllowed(guildId);
+    this.assertConfirm(options.confirm, 'role.reorder', { guildId });
+
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'role.reorder', {
+        reason: options.reason,
+        confirm: options.confirm,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('role.reorder', { guildId, count: positions.length });
+    }
+
+    const payload = positions.map((pos) => ({
+      id: pos.id,
+      ...(pos.position !== null ? { position: pos.position } : {}),
+    }));
+
+    const roles = await this.client.proxy.guilds(guildId).roles.patch({
+      body: payload as any,
+      reason: options.reason,
+    });
+
+    return (roles as APIRole[]).map((role: APIRole) => this.toRoleSummary(role, guildId));
+  }
+
   async createChannel(
     guildId: string,
     body: RESTPostAPIGuildChannelJSONBody & { type: GuildChannelTypes },
     reason?: string,
   ): Promise<DiscordChannelSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'channel.create', this.buildReasonOptions(reason)));
+    this.auditMutation(this.buildMutationContext(guildId, 'channel.create', { reason }));
 
     if (this.config.dryRun) {
       this.throwDryRun('channel.create', { guildId, body });
     }
 
-    const channel = await this.client.guilds.channels.create(guildId, body);
+    const channel = await this.client.guilds.channels.create(guildId, body, reason);
     return this.toChannelSummary(channel as unknown as APIChannel);
   }
 
@@ -97,7 +186,7 @@ export class DiscordService {
     reason?: string,
   ): Promise<DiscordChannelSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'channel.update', this.buildReasonOptions(reason)));
+    this.auditMutation(this.buildMutationContext(guildId, 'channel.update', { channelId, reason }));
 
     if (this.config.dryRun) {
       this.throwDryRun('channel.update', { guildId, channelId, body });
@@ -130,7 +219,7 @@ export class DiscordService {
     reason?: string,
   ): Promise<DiscordRoleSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'role.create', this.buildReasonOptions(reason)));
+    this.auditMutation(this.buildMutationContext(guildId, 'role.create', { reason }));
 
     if (this.config.dryRun) {
       this.throwDryRun('role.create', { guildId, body });
@@ -145,22 +234,15 @@ export class DiscordService {
     roleId: string,
     body: RESTPatchAPIGuildRoleJSONBody,
     reason?: string,
-    position?: number,
   ): Promise<DiscordRoleSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'role.update', this.buildReasonOptions(reason)));
+    this.auditMutation(this.buildMutationContext(guildId, 'role.update', { roleId, reason }));
 
     if (this.config.dryRun) {
-      this.throwDryRun('role.update', { guildId, roleId, body, position });
+      this.throwDryRun('role.update', { guildId, roleId, body });
     }
 
-    let role = await this.client.roles.edit(guildId, roleId, body, reason);
-
-    if (typeof position === 'number') {
-      await this.client.roles.editPositions(guildId, [{ id: roleId, position }]);
-      role = await this.client.roles.fetch(guildId, roleId, true);
-    }
-
+    const role = await this.client.roles.edit(guildId, roleId, body, reason);
     return this.toRoleSummary(role as unknown as APIRole, guildId);
   }
 
@@ -180,74 +262,251 @@ export class DiscordService {
     await this.client.roles.delete(guildId, roleId, options.reason);
   }
 
-  private assertGuildAllowed(guildId: string): void {
-    if (this.config.guildAllowlist.length === 0) {
-      return;
+  async listChannelPermissionOverwrites(guildId: string, channelId: string): Promise<{
+    channelId: string;
+    guildId: string;
+    overwrites: DiscordChannelPermissionOverwriteSummary[];
+  }> {
+    this.assertGuildAllowed(guildId);
+    const channel = await this.fetchAndAssertGuildChannel(guildId, channelId, 'channel.permission_overwrite.list');
+    const overwrites = this.extractPermissionOverwrites(channel);
+
+    return {
+      channelId,
+      guildId,
+      overwrites,
+    };
+  }
+
+  async setChannelPermissionOverwrite(
+    guildId: string,
+    channelId: string,
+    overwriteId: string,
+    overwrite: {
+      type: 0 | 1;
+      allow?: string;
+      deny?: string;
+    },
+    reason?: string,
+  ): Promise<{
+    channelId: string;
+    guildId: string;
+    overwrite: DiscordChannelPermissionOverwriteSummary | null;
+  }> {
+    this.assertGuildAllowed(guildId);
+    await this.fetchAndAssertGuildChannel(guildId, channelId, 'channel.permission_overwrite.set');
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'channel.permission_overwrite.set', {
+        channelId,
+        overwriteId,
+        reason,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('channel.permission_overwrite.set', {
+        guildId,
+        channelId,
+        overwriteId,
+        overwrite,
+      });
     }
 
-    if (!this.config.guildAllowlist.includes(guildId)) {
-      throw new ToolError('UNAUTHORIZED_GUILD', `Guild ${guildId} is not in DISCORD_GUILD_ALLOWLIST`, {
-        status: 403,
+    const payload: {
+      type: OverwriteType;
+      allow?: Array<bigint>;
+      deny?: Array<bigint>;
+    } = {
+      type: overwrite.type as OverwriteType,
+    };
+
+    if (overwrite.allow !== undefined) {
+      payload.allow = [BigInt(overwrite.allow)];
+    }
+
+    if (overwrite.deny !== undefined) {
+      payload.deny = [BigInt(overwrite.deny)];
+    }
+    await this.client.channels.editOverwrite(channelId, overwriteId, payload, {
+      guildId,
+      ...(reason !== undefined ? { reason } : {}),
+    });
+
+    const updated = await this.fetchAndAssertGuildChannel(guildId, channelId, 'channel.permission_overwrite.set');
+    const overwrites = this.extractPermissionOverwrites(updated);
+    const persisted = overwrites.find((item) => item.id === overwriteId) ?? null;
+
+    return {
+      channelId,
+      guildId,
+      overwrite: persisted,
+    };
+  }
+
+  async deleteChannelPermissionOverwrite(
+    guildId: string,
+    channelId: string,
+    overwriteId: string,
+    options: { reason?: string; confirm?: boolean },
+  ): Promise<{
+    channelId: string;
+    guildId: string;
+    overwriteId: string;
+  }> {
+    this.assertGuildAllowed(guildId);
+    await this.fetchAndAssertGuildChannel(guildId, channelId, 'channel.permission_overwrite.delete');
+    this.assertConfirm(options.confirm, 'channel.permission_overwrite.delete', {
+      guildId,
+      channelId,
+      overwriteId,
+    });
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'channel.permission_overwrite.delete', {
+        channelId,
+        overwriteId,
+        reason: options.reason,
+        confirm: options.confirm,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('channel.permission_overwrite.delete', { guildId, channelId, overwriteId });
+    }
+
+    await this.client.channels.deleteOverwrite(channelId, overwriteId, {
+      guildId,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+    });
+
+    return {
+      channelId,
+      guildId,
+      overwriteId,
+    };
+  }
+
+  async getRoleMemberCounts(guildId: string): Promise<Record<string, number>> {
+    this.assertGuildAllowed(guildId);
+    const counts = await this.client.roles.memberCounts(guildId);
+    return counts;
+  }
+
+  async getGatewayBotInfo(): Promise<{
+    url: string;
+    shards: number;
+    sessionStartLimit: {
+      total: number;
+      remaining: number;
+      resetAfter: number;
+      maxConcurrency: number;
+    };
+  }> {
+    const info = await this.client.proxy.gateway.bot.get();
+    return {
+      url: info.url,
+      shards: info.shards,
+      sessionStartLimit: {
+        total: info.session_start_limit.total,
+        remaining: info.session_start_limit.remaining,
+        resetAfter: info.session_start_limit.reset_after,
+        maxConcurrency: info.session_start_limit.max_concurrency,
+      },
+    };
+  }
+
+  async getInviteTargetUsers(inviteCode: string): Promise<string> {
+    const csv = await this.client.invites.getTargetUsers(inviteCode);
+    return csv;
+  }
+
+  async updateInviteTargetUsers(inviteCode: string, targetUserIds: string[]): Promise<void> {
+    await this.client.invites.updateTargetUsers(inviteCode, targetUserIds);
+  }
+
+  async getInviteTargetUserJobStatus(inviteCode: string): Promise<{
+    status: number;
+    totalUsers?: number;
+    processedUsers?: number;
+    createdAt?: string;
+    completedAt?: string;
+    errorMessage?: string;
+  }> {
+    const result = await this.client.invites.jobStatus(inviteCode);
+    const summary: {
+      status: number;
+      totalUsers?: number;
+      processedUsers?: number;
+      createdAt?: string;
+      completedAt?: string;
+      errorMessage?: string;
+    } = { status: result.status };
+
+    if (result.totalUsers !== undefined) {
+      summary.totalUsers = result.totalUsers;
+    }
+    if (result.processedUsers !== undefined) {
+      summary.processedUsers = result.processedUsers;
+    }
+    if (result.createdAt !== undefined) {
+      summary.createdAt = result.createdAt;
+    }
+    if (result.completedAt !== undefined && result.completedAt !== null) {
+      summary.completedAt = result.completedAt;
+    }
+    if (result.errorMessage !== undefined) {
+      summary.errorMessage = result.errorMessage;
+    }
+
+    return summary;
+  }
+
+  protected async fetchAndAssertGuildChannel(
+    guildId: string,
+    channelId: string,
+    action: string,
+  ): Promise<APIChannel> {
+    const channel = await this.client.channels.raw(channelId, true);
+    const candidate = channel as { guild_id?: unknown };
+
+    if (typeof candidate.guild_id !== 'string') {
+      const { ToolError } = await import('../lib/errors.js');
+      throw new ToolError('BAD_REQUEST', `Channel ${channelId} is not a guild channel`, {
+        status: 400,
         details: {
-          guildId,
-          allowlist: this.config.guildAllowlist,
+          action,
+          channelId,
         },
       });
     }
-  }
 
-  private assertConfirm(confirm: boolean | undefined, action: string, details: Record<string, unknown>): void {
-    if (confirm) {
-      return;
+    if (candidate.guild_id !== guildId) {
+      const { ToolError } = await import('../lib/errors.js');
+      throw new ToolError('UNAUTHORIZED_GUILD', `Channel ${channelId} is not in allowed guild ${guildId}`, {
+        status: 403,
+        details: {
+          action,
+          channelId,
+          guildId: candidate.guild_id,
+          expectedGuildId: guildId,
+        },
+      });
     }
 
-    throw new ToolError('CONFIRMATION_REQUIRED', `Action ${action} requires confirm=true`, {
-      status: 400,
-      details,
-    });
+    return channel;
   }
 
-  private throwDryRun(action: string, details: Record<string, unknown>): never {
-    throw new ToolError('DRY_RUN_BLOCKED', `Dry-run mode blocked mutation ${action}`, {
-      status: 409,
-      details,
-    });
-  }
-
-  private buildMutationContext(
-    guildId: string,
-    action: string,
-    options?: { reason?: string; confirm?: boolean },
-  ): MutationContext {
-    const context: MutationContext = { guildId, action };
-
-    if (options?.reason !== undefined) {
-      context.reason = options.reason;
+  private extractPermissionOverwrites(channel: APIChannel): DiscordChannelPermissionOverwriteSummary[] {
+    const candidate = channel as { permission_overwrites?: any[] };
+    if (!Array.isArray(candidate.permission_overwrites)) {
+      return [];
     }
 
-    if (options?.confirm !== undefined) {
-      context.confirm = options.confirm;
-    }
-
-    return context;
-  }
-
-  private buildReasonOptions(reason: string | undefined): { reason?: string } | undefined {
-    if (reason === undefined) {
-      return undefined;
-    }
-
-    return { reason: reason };
-  }
-
-  private auditMutation(ctx: MutationContext): void {
-    logger.info('discord.mutation', {
-      action: ctx.action,
-      guildId: ctx.guildId,
-      reason: ctx.reason,
-      confirm: ctx.confirm ?? false,
-      dryRun: this.config.dryRun,
-    });
+    return candidate.permission_overwrites.map((item) => ({
+      id: item.id,
+      type: item.type,
+      allow: item.allow,
+      deny: item.deny,
+    }));
   }
 
   private toCurrentUserGuildSummary(guild: RESTAPIPartialCurrentUserGuild): DiscordGuildSummary {
@@ -283,11 +542,11 @@ export class DiscordService {
   }
 
   private toChannelSummary(channel: APIChannel): DiscordChannelSummary {
-    const guildChannel = channel as Partial<APIGuildCategoryChannel> & Record<string, unknown>;
+    const guildChannel = channel as any;
 
     const summary: DiscordChannelSummary = {
       id: channel.id,
-      name: 'name' in guildChannel && typeof guildChannel.name === 'string' ? guildChannel.name : '(unnamed)',
+      name: guildChannel.name ?? '(unnamed)',
       type: channel.type,
     };
 
@@ -311,6 +570,15 @@ export class DiscordService {
       summary.nsfw = guildChannel.nsfw;
     }
 
+    if (Array.isArray(guildChannel.permission_overwrites)) {
+      summary.permissionOverwrites = guildChannel.permission_overwrites.map((item: any) => ({
+        id: item.id,
+        type: item.type,
+        allow: item.allow,
+        deny: item.deny,
+      }));
+    }
+
     return summary;
   }
 
@@ -324,6 +592,16 @@ export class DiscordService {
       hoist: role.hoist,
       mentionable: role.mentionable,
       permissions: role.permissions,
+    };
+  }
+
+  private toVoiceRegionSummary(region: APIVoiceRegion): DiscordVoiceRegionSummary {
+    return {
+      id: region.id,
+      name: region.name,
+      optimal: region.optimal,
+      deprecated: region.deprecated,
+      custom: region.custom,
     };
   }
 }

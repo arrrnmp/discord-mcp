@@ -7,19 +7,50 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const discordRuntime = await createDiscordRuntime(config);
   const mcpRuntime = await createMcpRuntime(config, discordRuntime);
-
-  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
-    logger.info('shutdown.received', { signal });
-    await mcpRuntime.close();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', () => {
-    void shutdown('SIGINT');
+  await mcpRuntime.listen();
+  logger.info('startup.ready', {
+    pid: process.pid,
+    host: config.httpHost,
+    port: config.httpPort,
+    path: config.httpPath,
+    mcpEndpoint: mcpRuntime.endpoint,
+    gatewayEnabled: config.gatewayEnabled,
+    gatewayIntents: config.gatewayIntents,
   });
 
-  process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
+  let isShuttingDown = false;
+  const shutdown = async (reason: string): Promise<void> => {
+    if (isShuttingDown) {
+      return;
+    }
+
+    isShuttingDown = true;
+    logger.info('shutdown.received', { reason });
+    await mcpRuntime.close();
+    await discordRuntime.close();
+  };
+
+  const requestShutdown = (reason: string): void => {
+    logger.info('shutdown.requested', { reason });
+    void shutdown(reason)
+      .catch((error) => {
+        logger.error('shutdown.failed', {
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        process.exitCode = 1;
+      })
+      .finally(() => {
+        process.exit();
+      });
+  };
+
+  process.once('SIGINT', () => {
+    requestShutdown('SIGINT');
+  });
+
+  process.once('SIGTERM', () => {
+    requestShutdown('SIGTERM');
   });
 }
 

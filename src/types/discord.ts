@@ -18,6 +18,7 @@ export type DiscordChannelSummary = {
   topic?: string | null;
   position?: number;
   nsfw?: boolean;
+  permissionOverwrites?: DiscordChannelPermissionOverwriteSummary[];
 };
 
 export type DiscordRoleSummary = {
@@ -29,4 +30,11 @@ export type DiscordRoleSummary = {
   hoist: boolean;
   mentionable: boolean;
   permissions: string;
+};
+
+export type DiscordChannelPermissionOverwriteSummary = {
+  id: string;
+  type: number;
+  allow: string;
+  deny: string;
 };

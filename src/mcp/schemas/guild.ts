@@ -7,3 +7,11 @@ export const getGuildInventoryInputSchema = z.object({
   guildId: snowflakeSchema,
   force: z.boolean().optional().default(true),
 });
+
+export const listGuildVoiceRegionsInputSchema = z.object({
+  guildId: snowflakeSchema,
+});
+
+export const listVoiceRegionsInputSchema = z.object({});
+
+export const getGatewayInfoInputSchema = z.object({});

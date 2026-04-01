@@ -1,17 +1,14 @@
-import type { WebhookStructure } from 'seyfert/lib/client/transformers.js';
+import type { WebhookMessageStructure, WebhookStructure } from 'seyfert/lib/client/transformers.js';
 import type { HttpClient } from 'seyfert/lib/client/httpclient.js';
-import type { RESTPatchAPIWebhookJSONBody, RESTPostAPIChannelWebhookJSONBody } from 'seyfert/lib/types/index.js';
+import type {
+  RESTPatchAPIWebhookJSONBody,
+  RESTPostAPIChannelWebhookJSONBody,
+} from 'seyfert/lib/types/index.js';
+import type { MessageWebhookCreateBodyRequest, MessageWebhookUpdateBodyRequest } from 'seyfert/lib/common/types/write.js';
 
 import type { AppConfig } from '../config/env.js';
 import { ToolError } from '../lib/errors.js';
-import { logger } from '../lib/logging.js';
-
-type MutationContext = {
-  guildId: string;
-  action: string;
-  reason?: string;
-  confirm?: boolean;
-};
+import { DiscordBaseService } from './base.js';
 
 export type DiscordWebhookSummary = {
   id: string;
@@ -25,11 +22,60 @@ export type DiscordWebhookSummary = {
   url?: string;
 };
 
-export class DiscordWebhooksService {
-  constructor(
-    private readonly client: HttpClient,
-    private readonly config: AppConfig,
-  ) {}
+export type DiscordWebhookMessageSummary = {
+  id: string;
+  channelId: string;
+  guildId?: string;
+  authorId: string;
+  authorUsername: string;
+  content: string;
+  timestamp?: number;
+  editedTimestamp?: number | null;
+  pinned?: boolean;
+  tts?: boolean;
+  mentionEveryone?: boolean;
+  attachmentCount?: number;
+  embedCount?: number;
+  type?: number;
+};
+
+export type ExecuteWebhookByTokenOptions = {
+  content?: string | undefined;
+  username?: string | undefined;
+  avatarUrl?: string | undefined;
+  tts?: boolean | undefined;
+  threadId?: string | undefined;
+  wait?: boolean | undefined;
+  suppressEmbeds?: boolean | undefined;
+  allowedMentionUserIds?: string[] | undefined;
+  allowedMentionRoleIds?: string[] | undefined;
+  allowedMentionEveryone?: boolean | undefined;
+  embeds?: unknown[] | undefined;
+  components?: unknown[] | undefined;
+  poll?: unknown;
+};
+
+export type FetchWebhookMessageByTokenOptions = {
+  threadId?: string | undefined;
+};
+
+export type EditWebhookMessageByTokenOptions = {
+  content?: string | undefined;
+  embeds?: unknown[] | undefined;
+  components?: unknown[] | undefined;
+  threadId?: string | undefined;
+};
+
+export type DeleteWebhookMessageByTokenOptions = {
+  threadId?: string | undefined;
+  reason?: string | undefined;
+  confirm?: boolean | undefined;
+};
+
+export class DiscordWebhooksService extends DiscordBaseService {
+  constructor(client: HttpClient, config: AppConfig) {
+    super(client, config);
+  }
 
   async listGuildWebhooks(guildId: string): Promise<DiscordWebhookSummary[]> {
     this.assertGuildAllowed(guildId);
@@ -113,6 +159,181 @@ export class DiscordWebhooksService {
     return this.editWebhook(guildId, webhookId, body, reason);
   }
 
+  async executeWebhookByToken(
+    guildId: string,
+    webhookId: string,
+    token: string,
+    options: ExecuteWebhookByTokenOptions,
+  ): Promise<DiscordWebhookMessageSummary | null> {
+    this.assertGuildAllowed(guildId);
+    await this.assertWebhookBelongsToGuild(guildId, webhookId, 'webhook.token.execute', token);
+    if (options.threadId !== undefined) {
+      await this.assertChannelBelongsToGuild(guildId, options.threadId, 'webhook.token.execute');
+    }
+    this.assertWebhookExecuteBody(options);
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'webhook.token.execute', {
+        webhookId,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('webhook.token.execute', { guildId, webhookId, options });
+    }
+
+    const body: MessageWebhookCreateBodyRequest = {};
+    if (options.content !== undefined) {
+      body.content = options.content;
+    }
+    if (options.username !== undefined) {
+      body.username = options.username;
+    }
+    if (options.avatarUrl !== undefined) {
+      body.avatar_url = options.avatarUrl;
+    }
+    if (options.tts !== undefined) {
+      body.tts = options.tts;
+    }
+    if (options.suppressEmbeds) {
+      body.flags = 1 << 2;
+    }
+    const allowedMentions = this.toAllowedMentions(options);
+    if (allowedMentions !== undefined) {
+      body.allowed_mentions = allowedMentions;
+    }
+    if (options.embeds !== undefined) {
+      body.embeds = options.embeds as MessageWebhookCreateBodyRequest['embeds'];
+    }
+    if (options.components !== undefined) {
+      body.components = options.components as NonNullable<MessageWebhookCreateBodyRequest['components']>;
+    }
+    if (options.poll !== undefined) {
+      body.poll = options.poll as MessageWebhookCreateBodyRequest['poll'];
+    }
+
+    const query: { wait?: boolean; thread_id?: string } = {};
+    if (options.wait !== undefined) {
+      query.wait = options.wait;
+    }
+    if (options.threadId !== undefined) {
+      query.thread_id = options.threadId;
+    }
+
+    const message = await this.client.webhooks.writeMessage(webhookId, token, {
+      body,
+      ...(Object.keys(query).length > 0 ? { query } : {}),
+    });
+
+    if (message !== null) {
+      this.assertWebhookMessageGuild(message, guildId, 'webhook.token.execute');
+      return this.toWebhookMessageSummary(message);
+    }
+
+    return null;
+  }
+
+  async fetchWebhookMessageByToken(
+    guildId: string,
+    webhookId: string,
+    token: string,
+    messageId: string,
+    options?: FetchWebhookMessageByTokenOptions,
+  ): Promise<DiscordWebhookMessageSummary> {
+    this.assertGuildAllowed(guildId);
+    await this.assertWebhookBelongsToGuild(guildId, webhookId, 'webhook.token.message.fetch', token);
+    if (options?.threadId !== undefined) {
+      await this.assertChannelBelongsToGuild(guildId, options.threadId, 'webhook.token.message.fetch');
+    }
+    const message = await this.client.webhooks.fetchMessage({
+      webhookId,
+      token,
+      messageId,
+      ...(options?.threadId !== undefined ? { query: { thread_id: options.threadId } } : {}),
+    });
+    this.assertWebhookMessageGuild(message, guildId, 'webhook.token.message.fetch');
+    return this.toWebhookMessageSummary(message);
+  }
+
+  async editWebhookMessageByToken(
+    guildId: string,
+    webhookId: string,
+    token: string,
+    messageId: string,
+    options: EditWebhookMessageByTokenOptions,
+  ): Promise<DiscordWebhookMessageSummary> {
+    this.assertGuildAllowed(guildId);
+    await this.assertWebhookBelongsToGuild(guildId, webhookId, 'webhook.token.message.edit', token);
+    if (options.threadId !== undefined) {
+      await this.assertChannelBelongsToGuild(guildId, options.threadId, 'webhook.token.message.edit');
+    }
+    this.assertWebhookMessageEditBody(options);
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'webhook.token.message.edit', {
+        webhookId,
+        messageId,
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('webhook.token.message.edit', { guildId, webhookId, messageId, options });
+    }
+
+    const body: MessageWebhookUpdateBodyRequest = {};
+    if (options.content !== undefined) {
+      body.content = options.content;
+    }
+    if (options.embeds !== undefined) {
+      body.embeds = options.embeds as MessageWebhookUpdateBodyRequest['embeds'];
+    }
+    if (options.components !== undefined) {
+      body.components = options.components as NonNullable<MessageWebhookUpdateBodyRequest['components']>;
+    }
+
+    const message = await this.client.webhooks.editMessage(webhookId, token, {
+      messageId,
+      body,
+      ...(options.threadId !== undefined ? { query: { thread_id: options.threadId } } : {}),
+    });
+
+    this.assertWebhookMessageGuild(message, guildId, 'webhook.token.message.edit');
+    return this.toWebhookMessageSummary(message);
+  }
+
+  async deleteWebhookMessageByToken(
+    guildId: string,
+    webhookId: string,
+    token: string,
+    messageId: string,
+    options: DeleteWebhookMessageByTokenOptions,
+  ): Promise<void> {
+    this.assertGuildAllowed(guildId);
+    await this.assertWebhookBelongsToGuild(guildId, webhookId, 'webhook.token.message.delete', token);
+    if (options.threadId !== undefined) {
+      await this.assertChannelBelongsToGuild(guildId, options.threadId, 'webhook.token.message.delete');
+    }
+    this.assertConfirm(options.confirm, 'webhook.token.message.delete', { guildId, webhookId, messageId });
+    this.auditMutation(
+      this.buildMutationContext(guildId, 'webhook.token.message.delete', {
+        webhookId,
+        messageId,
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
+        ...(options.confirm !== undefined ? { confirm: options.confirm } : {}),
+      }),
+    );
+
+    if (this.config.dryRun) {
+      this.throwDryRun('webhook.token.message.delete', { guildId, webhookId, messageId });
+    }
+
+    await this.client.webhooks.deleteMessage({
+      webhookId,
+      token,
+      messageId,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      ...(options.threadId !== undefined ? { query: { thread_id: options.threadId } } : {}),
+    });
+  }
+
   private toWebhookSummary(webhook: WebhookStructure): DiscordWebhookSummary {
     const summary: DiscordWebhookSummary = {
       id: webhook.id,
@@ -138,20 +359,52 @@ export class DiscordWebhooksService {
     return summary;
   }
 
-  private assertGuildAllowed(guildId: string): void {
-    if (this.config.guildAllowlist.length === 0) {
-      return;
+  private toWebhookMessageSummary(message: WebhookMessageStructure): DiscordWebhookMessageSummary {
+    const summary: DiscordWebhookMessageSummary = {
+      id: message.id,
+      channelId: message.channelId,
+      authorId: message.author.id,
+      authorUsername: message.author.username,
+      content: message.content ?? '',
+    };
+
+    if (typeof message.guildId === 'string') {
+      summary.guildId = message.guildId;
     }
 
-    if (!this.config.guildAllowlist.includes(guildId)) {
-      throw new ToolError('UNAUTHORIZED_GUILD', `Guild ${guildId} is not in DISCORD_GUILD_ALLOWLIST`, {
-        status: 403,
-        details: {
-          guildId,
-          allowlist: this.config.guildAllowlist,
-        },
-      });
+    if (typeof message.timestamp === 'number') {
+      summary.timestamp = message.timestamp;
     }
+
+    if (message.editedTimestamp !== undefined) {
+      summary.editedTimestamp = message.editedTimestamp === null ? null : Date.parse(message.editedTimestamp);
+    }
+
+    if (typeof message.pinned === 'boolean') {
+      summary.pinned = message.pinned;
+    }
+
+    if (typeof message.tts === 'boolean') {
+      summary.tts = message.tts;
+    }
+
+    if (typeof message.mentionEveryone === 'boolean') {
+      summary.mentionEveryone = message.mentionEveryone;
+    }
+
+    if (Array.isArray(message.attachments)) {
+      summary.attachmentCount = message.attachments.length;
+    }
+
+    if (Array.isArray(message.embeds)) {
+      summary.embedCount = message.embeds.length;
+    }
+
+    if (typeof message.type === 'number') {
+      summary.type = message.type;
+    }
+
+    return summary;
   }
 
   private assertWebhookGuild(summary: DiscordWebhookSummary, guildId: string, action: string): void {
@@ -197,8 +450,13 @@ export class DiscordWebhooksService {
     }
   }
 
-  private async assertWebhookBelongsToGuild(guildId: string, webhookId: string, action: string): Promise<void> {
-    const webhook = await this.client.webhooks.fetch(webhookId);
+  private async assertWebhookBelongsToGuild(
+    guildId: string,
+    webhookId: string,
+    action: string,
+    token?: string,
+  ): Promise<void> {
+    const webhook = await this.client.webhooks.fetch(webhookId, token);
     const summary = this.toWebhookSummary(webhook);
 
     if (summary.guildId !== undefined) {
@@ -209,40 +467,20 @@ export class DiscordWebhooksService {
     await this.assertChannelBelongsToGuild(guildId, summary.channelId, action);
   }
 
-  private assertConfirm(confirm: boolean | undefined, action: string, details: Record<string, unknown>): void {
-    if (confirm) {
+  private assertWebhookMessageGuild(message: WebhookMessageStructure, guildId: string, action: string): void {
+    if (message.guildId === undefined || message.guildId === guildId) {
       return;
     }
 
-    throw new ToolError('CONFIRMATION_REQUIRED', `Action ${action} requires confirm=true`, {
-      status: 400,
-      details,
+    throw new ToolError('UNAUTHORIZED_GUILD', `Webhook message ${message.id} is not in allowed guild ${guildId}`, {
+      status: 403,
+      details: {
+        action,
+        messageId: message.id,
+        guildId: message.guildId,
+        expectedGuildId: guildId,
+      },
     });
-  }
-
-  private throwDryRun(action: string, details: Record<string, unknown>): never {
-    throw new ToolError('DRY_RUN_BLOCKED', `Dry-run mode blocked mutation ${action}`, {
-      status: 409,
-      details,
-    });
-  }
-
-  private buildMutationContext(
-    guildId: string,
-    action: string,
-    options?: { reason?: string; confirm?: boolean },
-  ): MutationContext {
-    const context: MutationContext = { guildId, action };
-
-    if (options?.reason !== undefined) {
-      context.reason = options.reason;
-    }
-
-    if (options?.confirm !== undefined) {
-      context.confirm = options.confirm;
-    }
-
-    return context;
   }
 
   private buildMutationOptions(reason: string | undefined): { reason?: string } | undefined {
@@ -263,14 +501,71 @@ export class DiscordWebhooksService {
     return options;
   }
 
-  private auditMutation(ctx: MutationContext): void {
-    logger.info('discord.mutation', {
-      action: ctx.action,
-      guildId: ctx.guildId,
-      reason: ctx.reason,
-      confirm: ctx.confirm ?? false,
-      dryRun: this.config.dryRun,
-    });
+  private toAllowedMentions(options: ExecuteWebhookByTokenOptions):
+    | {
+        parse?: Array<'roles' | 'users' | 'everyone'>;
+        users?: string[];
+        roles?: string[];
+      }
+    | undefined {
+    const parse: Array<'roles' | 'users' | 'everyone'> = [];
+    if (options.allowedMentionEveryone) {
+      parse.push('everyone');
+    }
+
+    const users = options.allowedMentionUserIds;
+    const roles = options.allowedMentionRoleIds;
+
+    if (!users && !roles && parse.length === 0) {
+      return undefined;
+    }
+
+    const payload: {
+      parse?: Array<'roles' | 'users' | 'everyone'>;
+      users?: string[];
+      roles?: string[];
+    } = {};
+
+    if (parse.length > 0) {
+      payload.parse = parse;
+    }
+
+    if (users !== undefined) {
+      payload.users = users;
+    }
+
+    if (roles !== undefined) {
+      payload.roles = roles;
+    }
+
+    return payload;
+  }
+
+  private assertWebhookExecuteBody(options: ExecuteWebhookByTokenOptions): void {
+    if (
+      options.content === undefined &&
+      options.embeds === undefined &&
+      options.components === undefined &&
+      options.poll === undefined
+    ) {
+      throw new ToolError('BAD_REQUEST', 'At least one of content, embeds, components, or poll must be provided', {
+        status: 400,
+        details: {},
+      });
+    }
+  }
+
+  private assertWebhookMessageEditBody(options: EditWebhookMessageByTokenOptions): void {
+    if (
+      options.content === undefined &&
+      options.embeds === undefined &&
+      options.components === undefined
+    ) {
+      throw new ToolError('BAD_REQUEST', 'At least one editable field must be provided', {
+        status: 400,
+        details: {},
+      });
+    }
   }
 }
 
