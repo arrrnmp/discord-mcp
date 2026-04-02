@@ -59,7 +59,7 @@ export class DiscordStageService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'stage.create', {
         channelId: options.channelId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -86,7 +86,7 @@ export class DiscordStageService extends DiscordBaseService {
 
     const stage = await this.client.proxy['stage-instances'].post({
       body: payload,
-      reason: options.reason,
+      ...(options.reason !== undefined && { reason: options.reason }),
     });
 
     return this.toStageInstanceSummary(stage);
@@ -119,7 +119,7 @@ export class DiscordStageService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(existing.guild_id, 'stage.update', {
         channelId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -141,7 +141,7 @@ export class DiscordStageService extends DiscordBaseService {
 
     const stage = await this.client.proxy['stage-instances'](channelId).patch({
       body: payload,
-      reason: options.reason,
+      ...(options.reason !== undefined && { reason: options.reason }),
     });
 
     return this.toStageInstanceSummary(stage);
@@ -161,8 +161,8 @@ export class DiscordStageService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(existing.guild_id, 'stage.delete', {
         channelId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -171,7 +171,7 @@ export class DiscordStageService extends DiscordBaseService {
     }
 
     await this.client.proxy['stage-instances'](channelId).delete({
-      reason: options.reason,
+      ...(options.reason !== undefined && { reason: options.reason }),
     });
   }
 

@@ -1,5 +1,4 @@
-import type { AuditLogStructure } from 'seyfert/lib/client/transformers.js';
-import type { RESTGetAPIGuildAuditLogQuery } from 'seyfert/lib/types/index.js';
+import type { RESTGetAPIAuditLogQuery } from 'seyfert/lib/types/index.js';
 
 import { DiscordBaseService } from './base.js';
 
@@ -23,6 +22,7 @@ export type DiscordAuditLogSummary = {
     id: string;
     username: string;
     globalName: string | null;
+    bot?: boolean;
   }>;
   webhooks: Array<{
     id: string;
@@ -43,21 +43,21 @@ export class DiscordAuditLogsService extends DiscordBaseService {
   async fetchAuditLogs(guildId: string, options?: FetchAuditLogOptions): Promise<DiscordAuditLogSummary> {
     this.assertGuildAllowed(guildId);
 
-    const query: RESTGetAPIGuildAuditLogQuery = {};
+    const query: RESTGetAPIAuditLogQuery = {};
     if (options?.userId) query.user_id = options.userId;
     if (options?.actionType !== undefined) query.action_type = options.actionType;
     if (options?.before) query.before = options.before;
     if (options?.after) query.after = options.after;
     if (options?.limit) query.limit = options.limit;
 
-    const auditLog = await this.client.guilds.auditLogs.fetch(guildId, query);
+    const auditLog = await this.client.proxy.guilds(guildId)['audit-logs'].get({ query });
     return this.toAuditLogSummary(auditLog, guildId);
   }
 
-  private toAuditLogSummary(log: AuditLogStructure, guildId: string): DiscordAuditLogSummary {
+  private toAuditLogSummary(log: any, guildId: string): DiscordAuditLogSummary {
     return {
       guildId,
-      entries: log.entries.map((entry) => {
+      entries: log.entries.map((entry: any) => {
         const changes = entry.changes?.map((c: any) => ({
           key: c.key,
           oldValue: c.old_value,
@@ -80,13 +80,13 @@ export class DiscordAuditLogsService extends DiscordBaseService {
 
         return result;
       }),
-      users: log.users.map((user) => ({
+      users: log.users.map((user: any) => ({
         id: entryUserId(user),
         username: (user as any).username,
         globalName: (user as any).globalName,
         bot: (user as any).bot,
       })),
-      webhooks: log.webhooks.map((webhook) => ({
+      webhooks: log.webhooks.map((webhook: any) => ({
         id: webhook.id,
         name: webhook.name ?? '',
         channelId: webhook.channelId,

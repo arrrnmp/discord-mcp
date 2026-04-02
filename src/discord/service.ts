@@ -103,8 +103,8 @@ export class DiscordService extends DiscordBaseService {
 
     this.auditMutation(
       this.buildMutationContext(guildId, 'channel.reorder', {
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -121,7 +121,7 @@ export class DiscordService extends DiscordBaseService {
 
     await this.client.proxy.guilds(guildId).channels.patch({
       body: payload as any,
-      reason: options.reason,
+      ...(options.reason !== undefined && { reason: options.reason }),
     });
   }
 
@@ -141,8 +141,8 @@ export class DiscordService extends DiscordBaseService {
 
     this.auditMutation(
       this.buildMutationContext(guildId, 'role.reorder', {
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -157,7 +157,7 @@ export class DiscordService extends DiscordBaseService {
 
     const roles = await this.client.proxy.guilds(guildId).roles.patch({
       body: payload as any,
-      reason: options.reason,
+      ...(options.reason !== undefined && { reason: options.reason }),
     });
 
     return (roles as APIRole[]).map((role: APIRole) => this.toRoleSummary(role, guildId));
@@ -169,13 +169,16 @@ export class DiscordService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordChannelSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'channel.create', { reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'channel.create', { ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('channel.create', { guildId, body });
     }
 
-    const channel = await this.client.guilds.channels.create(guildId, body, reason);
+    const channel = await this.client.proxy.guilds(guildId).channels.post({
+      body: body as any,
+      ...(reason !== undefined && { reason }),
+    });
     return this.toChannelSummary(channel as unknown as APIChannel);
   }
 
@@ -186,7 +189,7 @@ export class DiscordService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordChannelSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'channel.update', { channelId, reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'channel.update', { channelId, ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('channel.update', { guildId, channelId, body });
@@ -219,7 +222,7 @@ export class DiscordService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordRoleSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'role.create', { reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'role.create', { ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('role.create', { guildId, body });
@@ -236,7 +239,7 @@ export class DiscordService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordRoleSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'role.update', { roleId, reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'role.update', { roleId, ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('role.update', { guildId, roleId, body });
@@ -299,7 +302,7 @@ export class DiscordService extends DiscordBaseService {
       this.buildMutationContext(guildId, 'channel.permission_overwrite.set', {
         channelId,
         overwriteId,
-        reason,
+        ...(reason !== undefined && { reason }),
       }),
     );
 
@@ -364,8 +367,8 @@ export class DiscordService extends DiscordBaseService {
       this.buildMutationContext(guildId, 'channel.permission_overwrite.delete', {
         channelId,
         overwriteId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 

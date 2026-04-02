@@ -21,34 +21,36 @@ const baseConfig: AppConfig = {
 describe('DiscordAuditLogsService', () => {
   test('maps entries, users, and related target IDs', async () => {
     const client = {
-      guilds: {
-        auditLogs: {
-          fetch: async () => ({
-            entries: [
-              {
-                id: '111',
-                actionType: 10,
-                targetId: '999',
-                userId: '222',
-                reason: 'cleanup',
-                options: { count: '2' },
-                changes: [
-                  { key: 'name', old_value: 'old', new_value: 'new' },
-                  { key: 'topic', new_value: 'hello' },
-                ],
-              },
-            ],
-            users: [
-              {
-                id: '222',
-                username: 'alice',
-                globalName: 'Alice',
-                bot: false,
-              },
-            ],
-            webhooks: [{ id: 'w1', name: 'hook', channelId: 'c1' }],
-          }),
-        },
+      proxy: {
+        guilds: (guildId: string) => ({
+          'audit-logs': {
+            get: async () => ({
+              entries: [
+                {
+                  id: '111',
+                  actionType: 10,
+                  targetId: '999',
+                  userId: '222',
+                  reason: 'cleanup',
+                  options: { count: '2' },
+                  changes: [
+                    { key: 'name', old_value: 'old', new_value: 'new' },
+                    { key: 'topic', new_value: 'hello' },
+                  ],
+                },
+              ],
+              users: [
+                {
+                  id: '222',
+                  username: 'alice',
+                  globalName: 'Alice',
+                  bot: false,
+                },
+              ],
+              webhooks: [{ id: 'w1', name: 'hook', channelId: 'c1' }],
+            }),
+          },
+        }),
       },
     } as unknown as HttpClient;
 

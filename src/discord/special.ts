@@ -206,25 +206,24 @@ export class DiscordSpecialService extends DiscordBaseService {
   async listChannelInvites(guildId: string, channelId: string): Promise<DiscordInviteSummary[]> {
     this.assertGuildAllowed(guildId);
     await this.getGuildIdForChannel(channelId, 'invite.list');
-    const invites = await this.client.invites.listFromChannel(channelId);
-    const summaries = invites.map((invite) => this.toInviteSummary(invite as any));
+    const invites = await this.client.proxy.channels(channelId).invites.get();
+    const summaries = (invites as any[]).map((invite: any) => this.toInviteSummary(invite));
     summaries.forEach((summary) => this.assertInviteGuild(summary, guildId, 'invite.list'));
     return summaries;
   }
 
   async createChannelInvite(
-    guildId: string,
     channelId: string,
     options: CreateInviteOptions,
   ): Promise<DiscordInviteSummary> {
+    const guildId = await this.getGuildIdForChannel(channelId, 'invite.create');
     this.assertGuildAllowed(guildId);
-    await this.getGuildIdForChannel(channelId, 'invite.create');
     this.assertInviteTargetCombination(options);
 
     this.auditMutation(
       this.buildMutationContext(guildId, 'invite.create', {
         channelId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -241,10 +240,33 @@ export class DiscordSpecialService extends DiscordBaseService {
     if (options.targetUserId !== undefined) body.target_user_id = options.targetUserId;
     if (options.targetApplicationId !== undefined) body.target_application_id = options.targetApplicationId;
 
-    const invite = await this.client.invites.create(channelId, body, options.reason);
+    const invite = await this.client.proxy.channels(channelId).invites.post({
+      body,
+      ...(options.reason !== undefined && { reason: options.reason }),
+    });
     const summary = this.toInviteSummary(invite as any);
     this.assertInviteGuild(summary, guildId, 'invite.create');
     return summary;
+  }
+
+  async listGuildInvites(guildId: string): Promise<DiscordInviteSummary[]> {
+    this.assertGuildAllowed(guildId);
+    const invites = await this.client.proxy.guilds(guildId).invites.get();
+    return (invites as any[]).map((invite: any) => this.toInviteSummary(invite));
+  }
+
+  async deleteInvite(code: string, options: { reason?: string; confirm?: boolean }): Promise<DiscordInviteSummary> {
+    this.assertConfirm(options.confirm, 'invite.delete', { code });
+    this.auditMutation(this.buildMutationContext('invite', 'invite.delete', {
+      inviteCode: code,
+      ...(options.reason !== undefined && { reason: options.reason }),
+      ...(options.confirm !== undefined && { confirm: options.confirm }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('invite.delete', { code });
+    const invite = await this.client.proxy.invites(code).delete({
+      ...(options.reason !== undefined && { reason: options.reason }),
+    });
+    return this.toInviteSummary(invite as any);
   }
 
   async listGuildAutoModerationRules(guildId: string): Promise<DiscordAutoModerationRuleSummary[]> {
@@ -260,7 +282,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.assertGuildAllowed(guildId);
     this.auditMutation(
       this.buildMutationContext(guildId, 'automod.create', {
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -280,7 +302,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     if (options.exemptRoleIds !== undefined) body.exempt_roles = options.exemptRoleIds;
     if (options.exemptChannelIds !== undefined) body.exempt_channels = options.exemptChannelIds;
 
-    const rule = await this.client.guilds.moderation.create(guildId, body, options.reason);
+    const rule = await this.client.guilds.moderation.create(guildId, body);
     this.assertAutoModerationGuild(rule, guildId, 'automod.create');
     return this.toAutoModerationRuleSummary(rule);
   }
@@ -295,7 +317,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'automod.update', {
         ruleId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -328,8 +350,8 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'automod.delete', {
         ruleId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -350,7 +372,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.assertGuildAllowed(guildId);
     this.auditMutation(
       this.buildMutationContext(guildId, 'emoji.create', {
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -378,7 +400,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'emoji.update', {
         emojiId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -402,8 +424,8 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'emoji.delete', {
         emojiId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -424,7 +446,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.assertGuildAllowed(guildId);
     this.auditMutation(
       this.buildMutationContext(guildId, 'sticker.create', {
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -432,18 +454,19 @@ export class DiscordSpecialService extends DiscordBaseService {
       this.throwDryRun('sticker.create', { guildId, name: options.name });
     }
 
+    const stickerBody: any = {
+      name: options.name,
+      description: options.description ?? '',
+      tags: options.tags,
+      file: {
+        filename: options.file.filename,
+        data: options.file.data,
+        contentType: options.file.contentType,
+      },
+    };
     const sticker = await this.client.guilds.stickers.create(
       guildId,
-      {
-        name: options.name,
-        description: options.description,
-        tags: options.tags,
-        file: {
-          filename: options.file.filename,
-          data: options.file.data,
-          contentType: options.file.contentType,
-        },
-      },
+      stickerBody,
       options.reason,
     );
 
@@ -461,7 +484,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'sticker.update', {
         stickerId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -486,8 +509,8 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'sticker.delete', {
         stickerId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -511,7 +534,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.assertGuildAllowed(guildId);
     this.auditMutation(
       this.buildMutationContext(guildId, 'soundboard.create', {
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -541,7 +564,7 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'soundboard.update', {
         soundId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -571,8 +594,8 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'soundboard.delete', {
         soundId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -639,8 +662,8 @@ export class DiscordSpecialService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext('application', 'app.emoji.delete', {
         emojiId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 

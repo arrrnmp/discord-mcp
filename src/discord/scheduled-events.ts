@@ -1,4 +1,4 @@
-import type { GuildScheduledEventStructure } from 'seyfert/lib/client/transformers.js';
+import { ToolError } from '../lib/errors.js';
 import type {
   RESTGetAPIGuildScheduledEventQuery,
   RESTGetAPIGuildScheduledEventUsersQuery,
@@ -83,7 +83,7 @@ export class DiscordScheduledEventsService extends DiscordBaseService {
 
   async createScheduledEvent(guildId: string, options: CreateScheduledEventOptions): Promise<DiscordScheduledEventSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'event.create', { reason: options.reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'event.create', { ...(options.reason !== undefined && { reason: options.reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('event.create', { guildId, name: options.name });
@@ -102,13 +102,13 @@ export class DiscordScheduledEventsService extends DiscordBaseService {
     if (options.entityMetadata !== undefined) body.entity_metadata = options.entityMetadata;
     if (options.image !== undefined) body.image = options.image;
 
-    const event = await this.client.proxy.guilds(guildId)['scheduled-events'].post({ body, reason: options.reason });
+    const event = await this.client.proxy.guilds(guildId)['scheduled-events'].post({ body, ...(options.reason !== undefined && { reason: options.reason }) });
     return this.toScheduledEventSummary(event);
   }
 
   async updateScheduledEvent(guildId: string, eventId: string, options: UpdateScheduledEventOptions): Promise<DiscordScheduledEventSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'event.update', { reason: options.reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'event.update', { ...(options.reason !== undefined && { reason: options.reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('event.update', { guildId, eventId });
@@ -118,15 +118,15 @@ export class DiscordScheduledEventsService extends DiscordBaseService {
     if (options.name !== undefined) body.name = options.name;
     if (options.scheduledStartTime !== undefined) body.scheduled_start_time = options.scheduledStartTime;
     if (options.scheduledEndTime !== undefined) body.scheduled_end_time = options.scheduledEndTime;
-    if (options.description !== undefined) body.description = options.description;
+    if (options.description !== undefined) (body as any).description = options.description;
     if (options.entityType !== undefined) body.entity_type = options.entityType;
     if (options.privacyLevel !== undefined) body.privacy_level = options.privacyLevel;
     if (options.status !== undefined) body.status = options.status;
-    if (options.channelId !== undefined) body.channel_id = options.channelId;
-    if (options.entityMetadata !== undefined) body.entity_metadata = options.entityMetadata;
+    if (options.channelId !== undefined) (body as any).channel_id = options.channelId;
+    if (options.entityMetadata !== undefined) (body as any).entity_metadata = options.entityMetadata;
     if (options.image !== undefined) body.image = options.image;
 
-    const event = await this.client.proxy.guilds(guildId)['scheduled-events'](eventId).patch({ body, reason: options.reason });
+    const event = await this.client.proxy.guilds(guildId)['scheduled-events'](eventId).patch({ body, ...(options.reason !== undefined && { reason: options.reason }) });
     this.assertEventGuild(event, guildId, 'event.update');
     return this.toScheduledEventSummary(event);
   }
@@ -134,13 +134,16 @@ export class DiscordScheduledEventsService extends DiscordBaseService {
   async deleteScheduledEvent(guildId: string, eventId: string, options: { reason?: string; confirm?: boolean }): Promise<void> {
     this.assertGuildAllowed(guildId);
     this.assertConfirm(options.confirm, 'event.delete', { guildId, eventId });
-    this.auditMutation(this.buildMutationContext(guildId, 'event.delete', options));
+    this.auditMutation(this.buildMutationContext(guildId, 'event.delete', {
+      ...(options.reason !== undefined && { reason: options.reason }),
+      ...(options.confirm !== undefined && { confirm: options.confirm }),
+    }));
 
     if (this.config.dryRun) {
       this.throwDryRun('event.delete', { guildId, eventId });
     }
 
-    await this.client.proxy.guilds(guildId)['scheduled-events'](eventId).delete({ reason: options.reason });
+    await this.client.proxy.guilds(guildId)['scheduled-events'](eventId).delete({ ...(options.reason !== undefined && { reason: options.reason }) });
   }
 
   async listScheduledEventUsers(
@@ -185,11 +188,11 @@ export class DiscordScheduledEventsService extends DiscordBaseService {
     };
   }
 
-  private assertEventGuild(event: any, guildId: string, action: string): void {
-    if (event.guild_id === guildId) return;
-    throw new ToolError('UNAUTHORIZED_GUILD', `Event ${event.id} is not in allowed guild ${guildId}`, {
+  private assertEventGuild(event: any, expectedGuildId: string, action: string): void {
+    if (event.guild_id === expectedGuildId) return;
+    throw new ToolError('UNAUTHORIZED_GUILD', `Event ${event.id} is not in allowed guild ${expectedGuildId}`, {
       status: 403,
-      details: { action, eventId: event.id, guildId: event.guild_id, expectedGuildId: guildId },
+      details: { action, eventId: event.id, guildId: event.guild_id, expectedGuildId },
     });
   }
 }

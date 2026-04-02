@@ -81,7 +81,7 @@ export function toJsonSafe(obj: unknown): unknown {
   for (const [key, value] of entries) {
     const type = typeof value;
     if (type === 'bigint') {
-      result[key] = value.toString();
+      result[key] = (value as bigint).toString();
       changed = true;
     } else if (value !== null && type === 'object') {
       const processed = toJsonSafe(value);

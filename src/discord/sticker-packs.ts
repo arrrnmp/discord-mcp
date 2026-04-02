@@ -1,4 +1,3 @@
-import type { StickerPackStructure } from 'seyfert/lib/client/transformers.js';
 import { DiscordBaseService } from './base.js';
 
 export type DiscordStickerPackSummary = {
@@ -32,6 +31,27 @@ export class DiscordStickerPacksService extends DiscordBaseService {
     const response = await this.client.proxy['sticker-packs'].get();
     const packs = (response.sticker_packs ?? []) as any[];
     return packs.map((pack) => this.toStickerPackSummary(pack));
+  }
+
+  async getStickerPack(packId: string): Promise<DiscordStickerPackSummary> {
+    const pack = await this.client.proxy['sticker-packs'](packId).get();
+    return this.toStickerPackSummary(pack as any);
+  }
+
+  async getSticker(stickerId: string): Promise<DiscordStickerPackSummary['stickers'][number]> {
+    const sticker = await this.client.proxy.stickers(stickerId).get() as any;
+    return {
+      id: sticker.id,
+      packId: sticker.pack_id ?? '',
+      name: sticker.name,
+      description: sticker.description ?? null,
+      tags: sticker.tags ?? '',
+      type: sticker.type,
+      formatType: sticker.format_type,
+      ...(sticker.available !== undefined && { available: sticker.available }),
+      ...(sticker.guild_id !== undefined && { guildId: sticker.guild_id }),
+      ...(sticker.sort_value !== undefined && { sortValue: sticker.sort_value }),
+    };
   }
 
   private toStickerPackSummary(pack: any): DiscordStickerPackSummary {

@@ -69,8 +69,7 @@ export class DiscordPresenceService extends DiscordBaseService {
 
     this.auditMutation(
       this.buildMutationContext('gateway', 'presence.set', {
-        status: options.status as any,
-        confirm: options.confirm,
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 

@@ -27,7 +27,7 @@ import { DiscordGuildSettingsService } from '../../discord/guild-settings.js';
 import { DiscordMembersService } from '../../discord/members.js';
 import { DiscordMessagesService } from '../../discord/messages.js';
 import { DiscordPresenceService } from '../../discord/presence.js';
-import { DiscordScheduledEventsService } from '../../discord/scheduled-events.js';
+import { DiscordScheduledEventsService, type UpdateScheduledEventOptions } from '../../discord/scheduled-events.js';
 import type { DiscordService } from '../../discord/service.js';
 import { DiscordSpecialService } from '../../discord/special.js';
 import { DiscordStageService } from '../../discord/stage.js';
@@ -395,19 +395,19 @@ function toGuildPruneCountQuery(input: z.infer<typeof getGuildPruneCountInputSch
   return query;
 }
 
-function toGuildPruneBody(input: z.infer<typeof beginGuildPruneInputSchema>): RESTPostAPIGuildPruneJSONBody {
-  const body: RESTPostAPIGuildPruneJSONBody = {};
+function toGuildPruneBody(input: z.infer<typeof beginGuildPruneInputSchema>): { days?: number; computePruneCount?: boolean; includeRoleIds?: string[] } {
+  const body: { days?: number; computePruneCount?: boolean; includeRoleIds?: string[] } = {};
 
   if (input.days !== undefined) {
     body.days = input.days;
   }
 
   if (input.computePruneCount !== undefined) {
-    body.compute_prune_count = input.computePruneCount;
+    body.computePruneCount = input.computePruneCount;
   }
 
   if (input.includeRoleIds !== undefined) {
-    body.include_roles = input.includeRoleIds;
+    body.includeRoleIds = input.includeRoleIds;
   }
 
   return body;
@@ -599,7 +599,7 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'Get guild widget settings',
     inputSchema: getGuildWidgetSettingsInputSchema,
     run: async ({ guildId }) => {
-      const widget = await context.guildSettings.getGuildWidgetSettings(guildId);
+      const widget = await context.guildSettings.fetchGuildWidgetSettings(guildId);
       return { widget };
     },
   });
@@ -623,7 +623,7 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'Get guild vanity URL',
     inputSchema: getGuildVanityUrlInputSchema,
     run: async ({ guildId }) => {
-      const vanity = await context.guildSettings.getGuildVanityUrl(guildId);
+      const vanity = await context.guildSettings.fetchGuildVanityUrl(guildId);
       return { vanity };
     },
   });
@@ -667,7 +667,7 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'Get guild welcome screen',
     inputSchema: getGuildWelcomeScreenInputSchema,
     run: async ({ guildId }) => {
-      const welcomeScreen = await context.guildSettings.getGuildWelcomeScreen(guildId);
+      const welcomeScreen = await context.guildSettings.fetchGuildWelcomeScreen(guildId);
       return { welcomeScreen };
     },
   });
@@ -754,7 +754,7 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'List guild audit logs with optional filters',
     inputSchema: listGuildAuditLogsInputSchema,
     run: async (input) => {
-      const auditLogs = await context.auditLogs.listAuditLogs(input.guildId, toAuditLogQuery(input));
+      const auditLogs = await context.auditLogs.fetchAuditLogs(input.guildId, toAuditLogQuery(input));
       return { auditLogs };
     },
   });
@@ -910,7 +910,6 @@ export function registerDiscordTools(context: ToolContext): void {
           mentionable,
         },
         reason,
-        position,
       );
 
       return { role };
@@ -1656,6 +1655,7 @@ export function registerDiscordTools(context: ToolContext): void {
 
   registerTool(context, {
     name: 'discord_delete_invite',
+
     description: 'Delete an invite (requires confirm=true)',
     inputSchema: deleteInviteInputSchema,
     run: async ({ code, reason, confirm }) => {
@@ -1677,7 +1677,7 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'List auto moderation rules for a guild',
     inputSchema: listAutoModerationRulesInputSchema,
     run: async ({ guildId }) => {
-      const rules = await context.special.listAutoModerationRules(guildId);
+      const rules = await context.special.listGuildAutoModerationRules(guildId);
       return { rules };
     },
   });
@@ -1687,31 +1687,40 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'Create an auto moderation rule',
     inputSchema: createAutoModerationRuleInputSchema,
     run: async ({ guildId, name, eventType, triggerType, triggerMetadata, actions, enabled, exemptRoleIds, exemptChannelIds }) => {
-      const body: RESTPostAPIAutoModerationRuleJSONBody = {
+      const options: {
+        name: string;
+        eventType: number;
+        triggerType: number;
+        triggerMetadata?: any;
+        actions: any[];
+        enabled?: boolean;
+        exemptRoleIds?: string[];
+        exemptChannelIds?: string[];
+      } = {
         name,
-        event_type: eventType,
-        trigger_type: triggerType,
+        eventType,
+        triggerType,
         actions: toAutoModerationActions(actions),
       };
 
       const triggerMetadataPayload = toAutoModerationTriggerMetadata(triggerMetadata);
       if (triggerMetadataPayload !== undefined) {
-        body.trigger_metadata = triggerMetadataPayload;
+        options.triggerMetadata = triggerMetadataPayload;
       }
 
       if (enabled !== undefined) {
-        body.enabled = enabled;
+        options.enabled = enabled;
       }
 
       if (exemptRoleIds !== undefined) {
-        body.exempt_roles = exemptRoleIds;
+        options.exemptRoleIds = exemptRoleIds;
       }
 
       if (exemptChannelIds !== undefined) {
-        body.exempt_channels = exemptChannelIds;
+        options.exemptChannelIds = exemptChannelIds;
       }
 
-      const rule = await context.special.createAutoModerationRule(guildId, body);
+      const rule = await context.special.createGuildAutoModerationRule(guildId, options);
       return { rule };
     },
   });
@@ -1732,38 +1741,28 @@ export function registerDiscordTools(context: ToolContext): void {
       exemptChannelIds,
       reason,
     }) => {
-      const body: RESTPatchAPIAutoModerationRuleJSONBody = {};
+      const options: {
+        name?: string;
+        eventType?: number;
+        triggerMetadata?: any;
+        actions?: any[];
+        enabled?: boolean;
+        exemptRoleIds?: string[];
+        exemptChannelIds?: string[];
+        reason?: string;
+      } = {};
 
-      if (name !== undefined) {
-        body.name = name;
-      }
-
-      if (eventType !== undefined) {
-        body.event_type = eventType;
-      }
-
+      if (name !== undefined) options.name = name;
+      if (eventType !== undefined) options.eventType = eventType;
       const triggerMetadataPayload = toAutoModerationTriggerMetadata(triggerMetadata);
-      if (triggerMetadataPayload !== undefined) {
-        body.trigger_metadata = triggerMetadataPayload;
-      }
+      if (triggerMetadataPayload !== undefined) options.triggerMetadata = triggerMetadataPayload;
+      if (actions !== undefined) options.actions = toAutoModerationActions(actions);
+      if (enabled !== undefined) options.enabled = enabled;
+      if (exemptRoleIds !== undefined) options.exemptRoleIds = exemptRoleIds;
+      if (exemptChannelIds !== undefined) options.exemptChannelIds = exemptChannelIds;
+      if (reason !== undefined) options.reason = reason;
 
-      if (actions !== undefined) {
-        body.actions = toAutoModerationActions(actions);
-      }
-
-      if (enabled !== undefined) {
-        body.enabled = enabled;
-      }
-
-      if (exemptRoleIds !== undefined) {
-        body.exempt_roles = exemptRoleIds;
-      }
-
-      if (exemptChannelIds !== undefined) {
-        body.exempt_channels = exemptChannelIds;
-      }
-
-      const rule = await context.special.updateAutoModerationRule(guildId, ruleId, body, reason);
+      const rule = await context.special.updateGuildAutoModerationRule(guildId, ruleId, options);
       return { rule };
     },
   });
@@ -1781,7 +1780,7 @@ export function registerDiscordTools(context: ToolContext): void {
         options.confirm = confirm;
       }
 
-      await context.special.deleteAutoModerationRule(guildId, ruleId, options);
+      await context.special.deleteGuildAutoModerationRule(guildId, ruleId, options);
       return { deletedRule: { guildId, ruleId } };
     },
   });
@@ -1822,16 +1821,10 @@ export function registerDiscordTools(context: ToolContext): void {
     description: 'Update guild emoji name or role allowlist',
     inputSchema: updateGuildEmojiInputSchema,
     run: async ({ guildId, emojiId, name, roleIds, reason }) => {
-      const options: { name?: string; roleIds?: string[] | null; reason?: string } = {};
-      if (name !== undefined) {
-        options.name = name;
-      }
-      if (roleIds !== undefined) {
-        options.roleIds = roleIds;
-      }
-      if (reason !== undefined) {
-        options.reason = reason;
-      }
+      const options: { name?: string; roleIds?: string[]; reason?: string } = {};
+      if (name !== undefined) options.name = name;
+      if (roleIds !== undefined && roleIds !== null) options.roleIds = roleIds;
+      if (reason !== undefined) options.reason = reason;
 
       const emoji = await context.special.updateGuildEmoji(guildId, emojiId, options);
       return { emoji };
@@ -1960,7 +1953,7 @@ export function registerDiscordTools(context: ToolContext): void {
       const options: {
         name: string;
         sound: string;
-        volume?: number | null;
+        volume?: number;
         emojiId?: string | null;
         emojiName?: string | null;
         reason?: string;
@@ -1968,7 +1961,7 @@ export function registerDiscordTools(context: ToolContext): void {
         name,
         sound,
       };
-      if (volume !== undefined) {
+      if (volume !== undefined && volume !== null) {
         options.volume = volume;
       }
       if (emojiId !== undefined) {
@@ -2078,42 +2071,46 @@ export function registerDiscordTools(context: ToolContext): void {
       image,
       reason,
     }) => {
-      const body: {
-        channel_id?: string;
+      const options: {
         name: string;
-        privacy_level: number;
-        scheduled_start_time: string;
-        scheduled_end_time?: string;
+        scheduledStartTime: string;
+        entityType: number;
+        privacyLevel: number;
+        channelId?: string;
+        scheduledEndTime?: string;
         description?: string;
-        entity_type: number;
-        entity_metadata?: { location?: string };
-        image?: string | null;
+        entityMetadata?: { location?: string };
+        image?: string;
+        reason?: string;
       } = {
         name,
-        privacy_level: privacyLevel,
-        scheduled_start_time: scheduledStartTime,
-        entity_type: entityType,
+        scheduledStartTime,
+        entityType,
+        privacyLevel,
       };
 
       if (channelId !== undefined && channelId !== null) {
-        body.channel_id = channelId;
+        options.channelId = channelId;
       }
       if (scheduledEndTime !== undefined) {
-        body.scheduled_end_time = scheduledEndTime;
+        options.scheduledEndTime = scheduledEndTime;
       }
       if (description !== undefined) {
-        body.description = description;
+        options.description = description;
       }
       if (entityMetadata !== undefined) {
-        body.entity_metadata = {
+        options.entityMetadata = {
           ...(entityMetadata.location !== undefined ? { location: entityMetadata.location } : {}),
         };
       }
-      if (image !== undefined) {
-        body.image = image;
+      if (image !== undefined && image !== null) {
+        options.image = image;
+      }
+      if (reason !== undefined) {
+        options.reason = reason;
       }
 
-      const event = await context.scheduledEvents.createScheduledEvent(guildId, body);
+      const event = await context.scheduledEvents.createScheduledEvent(guildId, options);
       return { event };
     },
   });
@@ -2137,53 +2134,25 @@ export function registerDiscordTools(context: ToolContext): void {
       image,
       reason,
     }) => {
-      const body: {
-        channel_id?: string;
-        name?: string;
-        privacy_level?: number;
-        scheduled_start_time?: string;
-        scheduled_end_time?: string;
-        description?: string | null;
-        entity_type?: number;
-        status?: number;
-        entity_metadata?: { location?: string };
-        image?: string | null;
-      } = {};
+      const options: UpdateScheduledEventOptions = {
+        ...(channelId !== undefined && { channelId }),
+        ...(name !== undefined && { name }),
+        ...(privacyLevel !== undefined && { privacyLevel }),
+        ...(scheduledStartTime !== undefined && { scheduledStartTime }),
+        ...(scheduledEndTime !== undefined && scheduledEndTime !== null && { scheduledEndTime }),
+        ...(description !== undefined && description !== null && { description }),
+        ...(entityType !== undefined && { entityType }),
+        ...(status !== undefined && { status }),
+        ...(entityMetadata !== undefined && {
+          entityMetadata: entityMetadata !== null
+            ? { ...(entityMetadata.location !== undefined ? { location: entityMetadata.location } : {}) }
+            : null
+        }),
+        ...(image !== undefined && { image }),
+        ...(reason !== undefined && { reason }),
+      };
 
-      if (channelId !== undefined && channelId !== null) {
-        body.channel_id = channelId;
-      }
-      if (name !== undefined) {
-        body.name = name;
-      }
-      if (privacyLevel !== undefined) {
-        body.privacy_level = privacyLevel;
-      }
-      if (scheduledStartTime !== undefined) {
-        body.scheduled_start_time = scheduledStartTime;
-      }
-      if (scheduledEndTime !== undefined && scheduledEndTime !== null) {
-        body.scheduled_end_time = scheduledEndTime;
-      }
-      if (description !== undefined) {
-        body.description = description;
-      }
-      if (entityType !== undefined) {
-        body.entity_type = entityType;
-      }
-      if (status !== undefined) {
-        body.status = status;
-      }
-      if (entityMetadata !== undefined) {
-        body.entity_metadata = {
-          ...(entityMetadata.location !== undefined ? { location: entityMetadata.location } : {}),
-        };
-      }
-      if (image !== undefined) {
-        body.image = image;
-      }
-
-      const event = await context.scheduledEvents.updateScheduledEvent(guildId, eventId, body, reason);
+      const event = await context.scheduledEvents.updateScheduledEvent(guildId, eventId, options);
       return { event };
     },
   });

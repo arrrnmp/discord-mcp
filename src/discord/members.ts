@@ -159,7 +159,7 @@ export class DiscordMembersService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.edit', {
         memberId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -177,8 +177,8 @@ export class DiscordMembersService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.kick', {
         memberId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -209,7 +209,7 @@ export class DiscordMembersService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.timeout', {
         memberId,
-        reason,
+        ...(reason !== undefined && { reason }),
       }),
     );
 
@@ -243,9 +243,9 @@ export class DiscordMembersService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.ban', {
         memberId,
-        reason: options.reason,
-        confirm: options.confirm,
-        deleteMessageSeconds: options.deleteMessageSeconds,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
+        ...(options.deleteMessageSeconds !== undefined && { deleteMessageSeconds: options.deleteMessageSeconds }),
       }),
     );
 
@@ -284,10 +284,10 @@ export class DiscordMembersService extends DiscordBaseService {
 
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.ban.bulk', {
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
         userIdsCount: userIds.length,
-        deleteMessageSeconds: options.deleteMessageSeconds,
+        ...(options.deleteMessageSeconds !== undefined && { deleteMessageSeconds: options.deleteMessageSeconds }),
       }),
     );
 
@@ -326,8 +326,8 @@ export class DiscordMembersService extends DiscordBaseService {
     this.assertVoiceStateCurrentBody(options);
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.voice_state.set.current', {
-        channelId: options.channelId,
-        reason: options.reason,
+        ...(options.channelId !== undefined && { channelId: options.channelId }),
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -369,7 +369,7 @@ export class DiscordMembersService extends DiscordBaseService {
       this.buildMutationContext(guildId, 'member.voice_state.set.user', {
         memberId,
         channelId: options.channelId,
-        reason: options.reason,
+        ...(options.reason !== undefined && { reason: options.reason }),
       }),
     );
 
@@ -403,8 +403,8 @@ export class DiscordMembersService extends DiscordBaseService {
     this.auditMutation(
       this.buildMutationContext(guildId, 'member.unban', {
         memberId,
-        reason: options.reason,
-        confirm: options.confirm,
+        ...(options.reason !== undefined && { reason: options.reason }),
+        ...(options.confirm !== undefined && { confirm: options.confirm }),
       }),
     );
 
@@ -426,7 +426,7 @@ export class DiscordMembersService extends DiscordBaseService {
       this.buildMutationContext(guildId, 'member.role.add', {
         memberId,
         roleId,
-        reason,
+        ...(reason !== undefined && { reason }),
       }),
     );
 
@@ -434,7 +434,7 @@ export class DiscordMembersService extends DiscordBaseService {
       this.throwDryRun('member.role.add', { guildId, memberId, roleId });
     }
 
-    await this.client.members.addRole(guildId, memberId, roleId, reason);
+    await this.client.members.addRole(guildId, memberId, roleId);
     const member = await this.client.members.fetch(guildId, memberId, true);
     return this.toMemberSummary(member);
   }
@@ -450,7 +450,7 @@ export class DiscordMembersService extends DiscordBaseService {
       this.buildMutationContext(guildId, 'member.role.remove', {
         memberId,
         roleId,
-        reason,
+        ...(reason !== undefined && { reason }),
       }),
     );
 
@@ -458,7 +458,7 @@ export class DiscordMembersService extends DiscordBaseService {
       this.throwDryRun('member.role.remove', { guildId, memberId, roleId });
     }
 
-    await this.client.members.removeRole(guildId, memberId, roleId, reason);
+    await this.client.members.removeRole(guildId, memberId, roleId);
     const member = await this.client.members.fetch(guildId, memberId, true);
     return this.toMemberSummary(member);
   }

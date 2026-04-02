@@ -1,5 +1,5 @@
-import type { ThreadChannelStructure } from 'seyfert/lib/client/transformers.js';
-import type { APIThreadMember, RESTGetAPIGuildThreadsQuery } from 'seyfert/lib/types/index.js';
+import type { APIThreadMember } from 'seyfert/lib/types/index.js';
+type ThreadsQuery = { before?: string; limit?: number };
 
 import { ToolError } from '../lib/errors.js';
 import { DiscordBaseService } from './base.js';
@@ -41,7 +41,7 @@ export class DiscordThreadsService extends DiscordBaseService {
   async listPublicArchivedThreads(guildId: string, channelId: string, options?: { before?: string; limit?: number }): Promise<{ threads: DiscordThreadSummary[]; members: DiscordThreadMemberSummary[]; hasMore: boolean }> {
     this.assertGuildAllowed(guildId);
     await this.assertThreadParentGuild(guildId, channelId, 'thread.archived.public.list');
-    const query: RESTGetAPIGuildThreadsQuery = {};
+    const query: ThreadsQuery = {};
     if (options?.before) query.before = options.before;
     if (options?.limit) query.limit = options.limit;
 
@@ -56,7 +56,7 @@ export class DiscordThreadsService extends DiscordBaseService {
   async listPrivateArchivedThreads(guildId: string, channelId: string, options?: { before?: string; limit?: number }): Promise<{ threads: DiscordThreadSummary[]; members: DiscordThreadMemberSummary[]; hasMore: boolean }> {
     this.assertGuildAllowed(guildId);
     await this.assertThreadParentGuild(guildId, channelId, 'thread.archived.private.list');
-    const query: RESTGetAPIGuildThreadsQuery = {};
+    const query: ThreadsQuery = {};
     if (options?.before) query.before = options.before;
     if (options?.limit) query.limit = options.limit;
 
@@ -71,7 +71,7 @@ export class DiscordThreadsService extends DiscordBaseService {
   async listJoinedPrivateArchivedThreads(guildId: string, channelId: string, options?: { before?: string; limit?: number }): Promise<{ threads: DiscordThreadSummary[]; members: DiscordThreadMemberSummary[]; hasMore: boolean }> {
     this.assertGuildAllowed(guildId);
     await this.assertThreadParentGuild(guildId, channelId, 'thread.archived.private.joined.list');
-    const query: RESTGetAPIGuildThreadsQuery = {};
+    const query: ThreadsQuery = {};
     if (options?.before) query.before = options.before;
     if (options?.limit) query.limit = options.limit;
 
@@ -106,11 +106,105 @@ export class DiscordThreadsService extends DiscordBaseService {
     await this.client.proxy.channels(threadId)['thread-members'](userId).put();
   }
 
-  async removeThreadMember(guildId: string, threadId: string, userId: string): Promise<void> {
+  async removeMemberFromThread(guildId: string, threadId: string, userId: string, options: { reason?: string; confirm?: boolean }): Promise<void> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'thread.member.remove', { channelId: threadId, memberId: userId }));
+    this.assertConfirm(options.confirm, 'thread.member.remove', { guildId, threadId, userId });
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.member.remove', {
+      channelId: threadId,
+      memberId: userId,
+      ...(options.reason !== undefined && { reason: options.reason }),
+      ...(options.confirm !== undefined && { confirm: options.confirm }),
+    }));
     if (this.config.dryRun) this.throwDryRun('thread.member.remove', { guildId, threadId, userId });
     await this.client.proxy.channels(threadId)['thread-members'](userId).delete();
+  }
+
+  async createThread(guildId: string, channelId: string, body: any, reason?: string): Promise<DiscordThreadSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.create', {
+      channelId,
+      ...(reason !== undefined && { reason }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('thread.create', { guildId, channelId });
+    const thread = await this.client.proxy.channels(channelId).threads.post({
+      body,
+      ...(reason !== undefined && { reason }),
+    });
+    return this.toThreadSummary(thread as any);
+  }
+
+  async updateThread(guildId: string, threadId: string, options: any, reason?: string): Promise<DiscordThreadSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.update', {
+      channelId: threadId,
+      ...(reason !== undefined && { reason }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('thread.update', { guildId, threadId });
+    const thread = await this.client.proxy.channels(threadId).patch({
+      body: options,
+      ...(reason !== undefined && { reason }),
+    });
+    return this.toThreadSummary(thread as any);
+  }
+
+  async joinThread(guildId: string, threadId: string): Promise<void> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.join', { channelId: threadId }));
+    if (this.config.dryRun) this.throwDryRun('thread.join', { guildId, threadId });
+    await this.client.proxy.channels(threadId)['thread-members']('@me').put();
+  }
+
+  async leaveThread(guildId: string, threadId: string): Promise<void> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.leave', { channelId: threadId }));
+    if (this.config.dryRun) this.throwDryRun('thread.leave', { guildId, threadId });
+    await this.client.proxy.channels(threadId)['thread-members']('@me').delete();
+  }
+
+  async lockThread(guildId: string, threadId: string, options?: { locked?: boolean; reason?: string; confirm?: boolean }): Promise<DiscordThreadSummary> {
+    this.assertGuildAllowed(guildId);
+    const locked = options?.locked ?? true;
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.lock', {
+      channelId: threadId,
+      ...(options?.reason !== undefined && { reason: options.reason }),
+      ...(options?.confirm !== undefined && { confirm: options.confirm }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('thread.lock', { guildId, threadId, locked });
+    const thread = await this.client.proxy.channels(threadId).patch({
+      body: { locked },
+      ...(options?.reason !== undefined && { reason: options.reason }),
+    });
+    return this.toThreadSummary(thread as any);
+  }
+
+  async unlockThread(guildId: string, threadId: string, options?: { reason?: string; confirm?: boolean }): Promise<DiscordThreadSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.unlock', {
+      channelId: threadId,
+      ...(options?.reason !== undefined && { reason: options.reason }),
+      ...(options?.confirm !== undefined && { confirm: options.confirm }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('thread.unlock', { guildId, threadId });
+    const thread = await this.client.proxy.channels(threadId).patch({
+      body: { locked: false },
+      ...(options?.reason !== undefined && { reason: options.reason }),
+    });
+    return this.toThreadSummary(thread as any);
+  }
+
+  async deleteThread(guildId: string, threadId: string, options: { reason?: string; confirm?: boolean }): Promise<DiscordThreadSummary> {
+    this.assertGuildAllowed(guildId);
+    this.assertConfirm(options.confirm, 'thread.delete', { guildId, threadId });
+    this.auditMutation(this.buildMutationContext(guildId, 'thread.delete', {
+      channelId: threadId,
+      ...(options.reason !== undefined && { reason: options.reason }),
+      ...(options.confirm !== undefined && { confirm: options.confirm }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('thread.delete', { guildId, threadId });
+    const thread = await this.client.proxy.channels(threadId).delete({
+      ...(options.reason !== undefined && { reason: options.reason }),
+    });
+    return this.toThreadSummary(thread as any);
   }
 
   private toThreadSummary(thread: any): DiscordThreadSummary {

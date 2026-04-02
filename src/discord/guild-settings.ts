@@ -1,14 +1,16 @@
 import type { GuildTemplateStructure } from 'seyfert/lib/client/transformers.js';
 import type {
   APIGuild,
+  APIGuildIntegration,
   APIGuildWelcomeScreen,
   APIGuildWidget,
   APIGuildWidgetSettings,
-  RESTGetAPIGuildPruneQuery,
   RESTPatchAPIGuildJSONBody,
+  RESTPatchAPIGuildTemplateJSONBody,
   RESTPatchAPIGuildWelcomeScreenJSONBody,
   RESTPatchAPIGuildWidgetSettingsJSONBody,
   RESTPostAPIGuildPruneJSONBody,
+  RESTPostAPIGuildTemplatesJSONBody,
 } from 'seyfert/lib/types/index.js';
 
 import { DiscordBaseService } from './base.js';
@@ -85,15 +87,15 @@ export type BeginGuildPruneOptions = {
 };
 
 export class DiscordGuildSettingsService extends DiscordBaseService {
-  async fetchGuildSettings(guildId: string): Promise<DiscordGuildSettingsSummary> {
+  async fetchGuildSettings(guildId: string, force = true): Promise<DiscordGuildSettingsSummary> {
     this.assertGuildAllowed(guildId);
-    const guild = await this.client.guilds.raw(guildId, { force: true });
+    const guild = await this.client.guilds.raw(guildId, { force });
     return this.toGuildSettingsSummary(guild);
   }
 
   async updateGuildSettings(guildId: string, body: RESTPatchAPIGuildJSONBody, reason?: string): Promise<DiscordGuildSettingsSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'guild.settings.update', { reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.settings.update', { ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('guild.settings.update', { guildId, body });
@@ -118,13 +120,13 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordGuildWidgetSettingsSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'guild.widget.update', { reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.widget.update', { ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('guild.widget.update', { guildId, body });
     }
 
-    const settings = await this.client.proxy.guilds(guildId).widget.patch({ body, reason });
+    const settings = await this.client.proxy.guilds(guildId).widget.patch({ body, ...(reason !== undefined && { reason }) });
     return {
       enabled: settings.enabled,
       channelId: settings.channel_id,
@@ -148,13 +150,13 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
     reason?: string,
   ): Promise<DiscordGuildWelcomeScreenSummary> {
     this.assertGuildAllowed(guildId);
-    this.auditMutation(this.buildMutationContext(guildId, 'guild.welcome_screen.update', { reason }));
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.welcome_screen.update', { ...(reason !== undefined && { reason }) }));
 
     if (this.config.dryRun) {
       this.throwDryRun('guild.welcome_screen.update', { guildId, body });
     }
 
-    const screen = await this.client.proxy.guilds(guildId)['welcome-screen'].patch({ body, reason });
+    const screen = await this.client.proxy.guilds(guildId)['welcome-screen'].patch({ body, ...(reason !== undefined && { reason }) });
     return this.toWelcomeScreenSummary(screen);
   }
 
@@ -169,7 +171,7 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
 
   async getGuildPruneCount(guildId: string, options?: GetGuildPruneCountOptions): Promise<DiscordGuildPruneCountSummary> {
     this.assertGuildAllowed(guildId);
-    const query: RESTGetAPIGuildPruneQuery = {};
+    const query: { days?: number; include_roles?: string } = {};
     if (options?.days !== undefined) query.days = options.days;
     if (options?.include_roles) query.include_roles = options.include_roles;
 
@@ -184,7 +186,10 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
   async beginGuildPrune(guildId: string, options: BeginGuildPruneOptions, mutation: { reason?: string; confirm?: boolean }): Promise<{ pruned: number | null }> {
     this.assertGuildAllowed(guildId);
     this.assertConfirm(mutation.confirm, 'guild.prune', { guildId });
-    this.auditMutation(this.buildMutationContext(guildId, 'guild.prune', { reason: mutation.reason, confirm: mutation.confirm }));
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.prune', {
+      ...(mutation.reason !== undefined && { reason: mutation.reason }),
+      ...(mutation.confirm !== undefined && { confirm: mutation.confirm }),
+    }));
 
     if (this.config.dryRun) {
       this.throwDryRun('guild.prune', { guildId, options });
@@ -195,7 +200,7 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
     if (options.computePruneCount !== undefined) body.compute_prune_count = options.computePruneCount;
     if (options.includeRoleIds) body.include_roles = options.includeRoleIds;
 
-    const result = await this.client.proxy.guilds(guildId).prune.post({ body, reason: mutation.reason });
+    const result = await this.client.proxy.guilds(guildId).prune.post({ body, ...(mutation.reason !== undefined && { reason: mutation.reason }) });
     return { pruned: result.pruned };
   }
 
@@ -203,6 +208,47 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
     this.assertGuildAllowed(guildId);
     const templates = await this.client.templates.list(guildId);
     return templates.map((tpl) => this.toTemplateSummary(tpl));
+  }
+
+  async listGuildIntegrations(guildId: string): Promise<APIGuildIntegration[]> {
+    this.assertGuildAllowed(guildId);
+    return this.client.proxy.guilds(guildId).integrations.get() as Promise<APIGuildIntegration[]>;
+  }
+
+  async createGuildTemplate(guildId: string, body: RESTPostAPIGuildTemplatesJSONBody, reason?: string): Promise<DiscordGuildTemplateSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.template.create', { ...(reason !== undefined && { reason }) }));
+    if (this.config.dryRun) this.throwDryRun('guild.template.create', { guildId, name: body.name });
+    const tpl = await this.client.proxy.guilds(guildId).templates.post({ body, ...(reason !== undefined && { reason }) });
+    return this.toTemplateSummary(tpl as any);
+  }
+
+  async syncGuildTemplate(guildId: string, templateCode: string, reason?: string): Promise<DiscordGuildTemplateSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.template.sync', { ...(reason !== undefined && { reason }) }));
+    if (this.config.dryRun) this.throwDryRun('guild.template.sync', { guildId, templateCode });
+    const tpl = await this.client.proxy.guilds(guildId).templates(templateCode).put();
+    return this.toTemplateSummary(tpl as any);
+  }
+
+  async updateGuildTemplate(guildId: string, templateCode: string, body: RESTPatchAPIGuildTemplateJSONBody, reason?: string): Promise<DiscordGuildTemplateSummary> {
+    this.assertGuildAllowed(guildId);
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.template.update', { ...(reason !== undefined && { reason }) }));
+    if (this.config.dryRun) this.throwDryRun('guild.template.update', { guildId, templateCode });
+    const tpl = await this.client.proxy.guilds(guildId).templates(templateCode).patch({ body, ...(reason !== undefined && { reason }) });
+    return this.toTemplateSummary(tpl as any);
+  }
+
+  async deleteGuildTemplate(guildId: string, templateCode: string, options: { reason?: string; confirm?: boolean }): Promise<DiscordGuildTemplateSummary> {
+    this.assertGuildAllowed(guildId);
+    this.assertConfirm(options.confirm, 'guild.template.delete', { guildId, templateCode });
+    this.auditMutation(this.buildMutationContext(guildId, 'guild.template.delete', {
+      ...(options.reason !== undefined && { reason: options.reason }),
+      ...(options.confirm !== undefined && { confirm: options.confirm }),
+    }));
+    if (this.config.dryRun) this.throwDryRun('guild.template.delete', { guildId, templateCode });
+    const tpl = await this.client.proxy.guilds(guildId).templates(templateCode).delete();
+    return this.toTemplateSummary(tpl as any);
   }
 
   private toGuildSettingsSummary(guild: APIGuild): DiscordGuildSettingsSummary {
@@ -224,7 +270,7 @@ export class DiscordGuildSettingsService extends DiscordBaseService {
       defaultMessageNotifications: guild.default_message_notifications,
       vanityUrlCode: guild.vanity_url_code,
       premiumTier: guild.premium_tier,
-      premiumSubscriptionCount: guild.premium_subscription_count,
+      ...(guild.premium_subscription_count !== undefined && { premiumSubscriptionCount: guild.premium_subscription_count }),
       iconHash: guild.icon,
       splashHash: guild.splash,
       discoverySplashHash: guild.discovery_splash,
