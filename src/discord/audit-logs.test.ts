@@ -96,4 +96,155 @@ describe('DiscordAuditLogsService', () => {
       }),
     ).rejects.toThrow('is not in DISCORD_GUILD_ALLOWLIST');
   });
+
+  test('fetchAuditLogs with userId filter', async () => {
+    const client = {
+      proxy: {
+        guilds: () => ({
+          'audit-logs': {
+            get: async ({ query }: any) => {
+              expect(query.user_id).toBe('123456789012345670');
+              return {
+                entries: [],
+                users: [],
+                webhooks: [],
+              };
+            },
+          },
+        }),
+      },
+    } as unknown as HttpClient;
+
+    const service = new DiscordAuditLogsService(client, baseConfig);
+    const result = await service.fetchAuditLogs('123456789012345678', {
+      userId: '123456789012345670',
+    });
+
+    expect(result.guildId).toBe('123456789012345678');
+    expect(result.entries).toHaveLength(0);
+  });
+
+  test('fetchAuditLogs with actionType filter', async () => {
+    const client = {
+      proxy: {
+        guilds: () => ({
+          'audit-logs': {
+            get: async ({ query }: any) => {
+              expect(query.action_type).toBe(20);
+              return {
+                entries: [],
+                users: [],
+                webhooks: [],
+              };
+            },
+          },
+        }),
+      },
+    } as unknown as HttpClient;
+
+    const service = new DiscordAuditLogsService(client, baseConfig);
+    const result = await service.fetchAuditLogs('123456789012345678', {
+      actionType: 20,
+    });
+
+    expect(result.guildId).toBe('123456789012345678');
+    expect(result.entries).toHaveLength(0);
+  });
+
+  test('fetchAuditLogs with before and after filters', async () => {
+    const client = {
+      proxy: {
+        guilds: () => ({
+          'audit-logs': {
+            get: async ({ query }: any) => {
+              expect(query.before).toBe('123456789012345680');
+              expect(query.after).toBe('123456789012345670');
+              return {
+                entries: [],
+                users: [],
+                webhooks: [],
+              };
+            },
+          },
+        }),
+      },
+    } as unknown as HttpClient;
+
+    const service = new DiscordAuditLogsService(client, baseConfig);
+    const result = await service.fetchAuditLogs('123456789012345678', {
+      before: '123456789012345680',
+      after: '123456789012345670',
+    });
+
+    expect(result.guildId).toBe('123456789012345678');
+  });
+
+  test('fetchAuditLogs with limit filter', async () => {
+    const client = {
+      proxy: {
+        guilds: () => ({
+          'audit-logs': {
+            get: async ({ query }: any) => {
+              expect(query.limit).toBe(50);
+              return {
+                entries: [],
+                users: [],
+                webhooks: [],
+              };
+            },
+          },
+        }),
+      },
+    } as unknown as HttpClient;
+
+    const service = new DiscordAuditLogsService(client, baseConfig);
+    const result = await service.fetchAuditLogs('123456789012345678', {
+      limit: 50,
+    });
+
+    expect(result.guildId).toBe('123456789012345678');
+  });
+
+  test('maps changes with both old and new values', async () => {
+    const client = {
+      proxy: {
+        guilds: () => ({
+          'audit-logs': {
+            get: async () => ({
+              entries: [
+                {
+                  id: '123',
+                  actionType: 10,
+                  changes: [
+                    { key: 'name', old_value: 'OldName', new_value: 'NewName' },
+                    { key: 'permissions', old_value: '100', new_value: '200' },
+                  ],
+                },
+              ],
+              users: [],
+              webhooks: [],
+            }),
+          },
+        }),
+      },
+    } as unknown as HttpClient;
+
+    const service = new DiscordAuditLogsService(client, baseConfig);
+    const result = await service.fetchAuditLogs('123456789012345678');
+
+    expect(result.entries).toHaveLength(1);
+    const entry = result.entries[0]!;
+    expect(entry.changeCount).toBe(2);
+    expect(entry.changes).toHaveLength(2);
+    expect(entry.changes![0]).toEqual({
+      key: 'name',
+      oldValue: 'OldName',
+      newValue: 'NewName',
+    });
+    expect(entry.changes![1]).toEqual({
+      key: 'permissions',
+      oldValue: '100',
+      newValue: '200',
+    });
+  });
 });
