@@ -3,9 +3,9 @@
 ## [1.1.0] - 2026-04-01
 
 ### Architectural Refactor
-- **Service Inheritance**: Consolidated shared logic (authorization, dry-run, auditing) into a unified `DiscordBaseService` class. All service layers now extend this base for consistent security enforcement.
+- **Service Inheritance**: Every service now shares a unified `DiscordBaseService` covering auth checks, dry-run mode, and audit logging — consistent security enforcement across all 126 tools.
 - **Memory Safety**: Implemented ephemeral MCP sessions with `MCP_SESSION_TTL_MS` (60m) idle timeout and automatic background cleanup to prevent memory leaks in the Streamable HTTP transport.
-- **Improved Initialization**: Decoupled Discord client initialization from MCP runtime, allowing for better error handling and REST-only vs. Gateway-enabled modes.
+- **Improved Initialization**: Discord client startup is now independent from the MCP runtime, making REST-only and gateway-enabled modes cleaner to start and easier to debug.
 
 ### Security & Safety
 - **Allowlist Hardening**: Dedicated test suite for `DISCORD_GUILD_ALLOWLIST` ensuring all service operations are correctly gated.

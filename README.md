@@ -2,7 +2,7 @@
 
 A Bun-run MCP server that uses Seyfert to perform Discord API actions.
 
-## What this does (v1)
+## What this does (v1.1.0)
 
 - Exposes Discord admin tools over MCP (Streamable HTTP transport)
 - Guild introspection:
